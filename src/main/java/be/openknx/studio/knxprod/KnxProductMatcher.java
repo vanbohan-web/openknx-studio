@@ -44,6 +44,19 @@ public final class KnxProductMatcher {
             }
         }
 
+        var deviceOemVariant = oemVariantFromHardwareType(hardwareType);
+        if (!deviceOemVariant.isBlank()) {
+            var oemVariantMatches = base.stream()
+                    .filter(candidate -> !oemVariantFromHardwareRef(candidate.hardwareRef()).isBlank())
+                    .filter(candidate -> deviceOemVariant.equalsIgnoreCase(
+                            oemVariantFromHardwareRef(candidate.hardwareRef())))
+                    .toList();
+
+            if (!oemVariantMatches.isEmpty()) {
+                base = oemVariantMatches;
+            }
+        }
+
         if (!hardwareType.isBlank()) {
             var exactHardware = base.stream()
                     .filter(candidate -> !candidate.hardwareTypeMarker().isBlank())
@@ -199,6 +212,29 @@ public final class KnxProductMatcher {
         }
 
         return value;
+    }
+
+    private static String oemVariantFromHardwareType(String hardwareType) {
+        if (hardwareType == null || hardwareType.length() < 4) {
+            return "";
+        }
+
+        return hardwareType.substring(hardwareType.length() - 4).toUpperCase(Locale.ROOT);
+    }
+
+    private static String oemVariantFromHardwareRef(String hardwareRef) {
+        if (hardwareRef == null || hardwareRef.isBlank()) {
+            return "";
+        }
+
+        var upper = hardwareRef.toUpperCase(Locale.ROOT);
+        int idx = upper.lastIndexOf("-O");
+        if (idx < 0 || idx + 6 > upper.length()) {
+            return "";
+        }
+
+        var candidate = upper.substring(idx + 2, idx + 6);
+        return candidate.matches("[0-9A-F]{4}") ? candidate : "";
     }
 
     private static String originalManufacturerRefFromHardwareType(String hardwareType) {
