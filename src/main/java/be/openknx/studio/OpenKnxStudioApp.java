@@ -4,6 +4,7 @@ import be.openknx.studio.knx.KnxConnectionService;
 import be.openknx.studio.knx.KnxDeviceInfoService;
 import be.openknx.studio.knx.KnxDeviceScanService;
 import be.openknx.studio.knx.KnxDiscoveryService;
+import be.openknx.studio.knx.KnxDeepRecognitionService;
 import be.openknx.studio.knx.KnxGroupMonitorService;
 import be.openknx.studio.knx.KnxInventoryService;
 import be.openknx.studio.knxprod.KnxProdImportService;
@@ -20,7 +21,9 @@ import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 public final class OpenKnxStudioApp extends Application {
@@ -35,12 +38,14 @@ public final class OpenKnxStudioApp extends Application {
 
     private final KnxProdImportService knxProdImportService = new KnxProdImportService();
     private final KnxProductMatcher productMatcher = new KnxProductMatcher();
+    private final KnxDeepRecognitionService deepRecognitionService = new KnxDeepRecognitionService();
 
     private final TextArea log = new TextArea();
     private final TextField routerIp = new TextField();
     private final TableView<KnxDeviceInfoService.BasicDeviceInfo> deviceTable = new TableView<>();
 
     private List<KnxProductCandidate> productCatalog = List.of();
+    private final Map<String, KnxDeepRecognitionService.Result> deepRecognitionResults = new HashMap<>();
 
     @Override
     public void start(Stage stage) {
@@ -74,6 +79,7 @@ public final class OpenKnxStudioApp extends Application {
         deviceAddressField.setPromptText("bv. 1.1.15");
         deviceAddressField.setPrefColumnCount(10);
         var deviceInfoButton = new Button("Lees apparaatinfo");
+        var deepRecognizeButton = new Button("Diep herkennen");
 
         var importKnxProdButton = new Button("Importeer productdatabase");
         var clearCatalogButton = new Button("Wis productdatabase");
@@ -101,6 +107,7 @@ public final class OpenKnxStudioApp extends Application {
                 • 'Scan + herken apparaten' maakt automatisch een inventaris.
                 • 'Importeer .knxprod' leest officiële KNX-productbestanden in.
                 • OpenKNX Studio probeert daarna fabrikant, maskversie en System-7 hardware-ID te koppelen.
+                • 'Diep herkennen' vergelijkt read-only geheugenfingerprints met de productdatabase.
 
                 Alle busfuncties in deze versie zijn read-only.
                 """);
@@ -215,7 +222,8 @@ public final class OpenKnxStudioApp extends Application {
             var area = areaField.getValue();
             var line = lineField.getValue();
 
-            setBusy(true, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
+            setBusy(true, scanButton, inventoryButton, deviceInfoButton, deepRecognizeButton, startMonitorButton);
+            deepRecognitionResults.clear();
             deviceTable.getItems().clear();
             status.setText("Inventaris starten...");
             append("\n--- Automatische inventaris " + area + "." + line + " ---");
@@ -237,7 +245,7 @@ public final class OpenKnxStudioApp extends Application {
                         }
                     })
                     .whenComplete((devices, error) -> Platform.runLater(() -> {
-                        setBusy(false, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
+                        setBusy(false, scanButton, inventoryButton, deviceInfoButton, deepRecognizeButton, startMonitorButton);
                         startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
@@ -278,6 +286,108 @@ public final class OpenKnxStudioApp extends Application {
 
                         status.setText("Apparaatinfo gelezen van " + info.address());
                         appendDeviceInfo(info);
+                    }));
+        });
+
+        deepRecognizeButton.setOnAction(event -> {
+            if (productCatalog.isEmpty()) {
+                status.setText("Geen productdatabase geladen");
+                append("Diep herkennen kan pas nadat een productdatabase is geladen.");
+                return;
+            }
+
+            KnxDeviceInfoService.BasicDeviceInfo info = deviceTable.getSelectionModel().getSelectedItem();
+            var requestedAddress = deviceAddressField.getText().trim();
+
+            if (info == null && !requestedAddress.isBlank()) {
+                info = deviceTable.getItems().stream()
+                        .filter(item -> requestedAddress.equals(item.address()))
+                        .findFirst()
+                        .orElse(null);
+            }
+
+            if (info == null) {
+                status.setText("Selecteer eerst een apparaat");
+                append("Selecteer een rij in de apparaattabel of dubbelklik erop voordat je 'Diep herkennen' gebruikt.");
+                return;
+            }
+
+            if (!"System 7".equals(info.systemType())) {
+                status.setText("Diepe herkenning is nu voor System 7");
+                append("Diepe herkenning is in deze versie alleen actief voor System-7-apparaten.");
+                return;
+            }
+
+            var candidates = productMatcher.match(info, productCatalog);
+            if (candidates.isEmpty()) {
+                status.setText("Geen kandidaten");
+                append("Geen productkandidaten beschikbaar voor diepe herkenning van " + info.address() + ".");
+                return;
+            }
+
+            final var selectedInfo = info;
+            deepRecognizeButton.setDisable(true);
+            status.setText("Diepe herkenning " + selectedInfo.address() + "...");
+            append("\n--- Diepe herkenning " + selectedInfo.address() + " ---");
+            append("Start met " + candidates.stream().map(KnxProductCandidate::displayName).distinct().count()
+                    + " productkandidaten.");
+            append("Alleen read-only geheugenlezingen worden uitgevoerd.");
+
+            CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return deepRecognitionService.recognize(
+                                    routerIp.getText(),
+                                    selectedInfo,
+                                    candidates
+                            );
+                        }
+                        catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .whenComplete((result, error) -> Platform.runLater(() -> {
+                        deepRecognizeButton.setDisable(false);
+
+                        if (error != null) {
+                            status.setText("Diepe herkenning mislukt");
+                            append("Fout tijdens diepe herkenning: " + rootMessage(error));
+                            return;
+                        }
+
+                        deepRecognitionResults.put(selectedInfo.address(), result);
+                        deviceTable.refresh();
+
+                        var remaining = result.remainingCandidates();
+                        var distinctRemaining = remaining.stream()
+                                .map(KnxProductCandidate::displayName)
+                                .distinct()
+                                .toList();
+
+                        status.setText("Diepe herkenning klaar: " + distinctRemaining.size() + " kandidaat/kandidaten");
+                        append("Geheugenlezingen: " + result.memoryReads()
+                                + ", vergeleken fingerprints: " + result.comparedSamples() + ".");
+                        append("Diep bevestigd: " + result.verifiedMatches().size()
+                                + ", onbeslist: " + result.inconclusiveMatches().size() + ".");
+
+                        if (remaining.isEmpty()) {
+                            append("Geen kandidaat kwam overeen met de gelezen codefingerprint.");
+                        }
+                        else {
+                            append("Overblijvende kandidaten:");
+                            remaining.stream()
+                                    .map(candidate -> "  • " + candidate.displayName()
+                                            + " | " + candidate.hardwareName()
+                                            + " | " + candidate.applicationRef())
+                                    .distinct()
+                                    .sorted()
+                                    .forEach(this::append);
+                        }
+
+                        if (!result.diagnostics().isEmpty()) {
+                            append("Diagnose:");
+                            result.diagnostics().forEach(line -> append("  • " + line));
+                        }
                     }));
         });
 
@@ -322,6 +432,7 @@ public final class OpenKnxStudioApp extends Application {
                         var merged = new java.util.LinkedHashSet<KnxProductCandidate>(productCatalog);
                         merged.addAll(catalog);
                         productCatalog = List.copyOf(merged);
+                        deepRecognitionResults.clear();
 
                         var products = productCatalog.stream()
                                 .map(KnxProductCandidate::displayName)
@@ -338,6 +449,7 @@ public final class OpenKnxStudioApp extends Application {
 
         clearCatalogButton.setOnAction(event -> {
             productCatalog = List.of();
+            deepRecognitionResults.clear();
             catalogStatus.setText("Geen productdatabase geladen");
             clearCatalogButton.setDisable(true);
             deviceTable.refresh();
@@ -410,7 +522,8 @@ public final class OpenKnxStudioApp extends Application {
         var deviceInfoRow = new HBox(10,
                 new Label("Fysiek adres:"),
                 deviceAddressField,
-                deviceInfoButton
+                deviceInfoButton,
+                deepRecognizeButton
         );
 
         var productRow = new HBox(10,
@@ -481,8 +594,18 @@ public final class OpenKnxStudioApp extends Application {
         orderInfo.setPrefWidth(130);
 
         var product = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Productmatch");
-        product.setCellValueFactory(data ->
-                new SimpleStringProperty(productMatcher.summarize(data.getValue(), productCatalog)));
+        product.setCellValueFactory(data -> {
+            var info = data.getValue();
+            var deep = deepRecognitionResults.get(info.address());
+            if (deep == null) {
+                return new SimpleStringProperty(productMatcher.summarize(info, productCatalog));
+            }
+
+            var prefix = deep.conclusive() ? "DIEP: " : "DIEP?: ";
+            return new SimpleStringProperty(
+                    prefix + productMatcher.summarizeCandidates(deep.remainingCandidates())
+            );
+        });
         product.setPrefWidth(260);
 
         var program = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Applicatie");
@@ -505,6 +628,11 @@ public final class OpenKnxStudioApp extends Application {
                     append("\n--- Productkandidaten " + info.address() + " ---");
                     append("Applicatie: " + info.programVersion());
                     append("Hardware-ID: " + info.hardwareType());
+
+                    var deep = deepRecognitionResults.get(info.address());
+                    if (deep != null) {
+                        append("Diepe match: " + productMatcher.summarizeCandidates(deep.remainingCandidates()));
+                    }
 
                     var matches = productMatcher.describeMatches(info, productCatalog);
                     if (matches.isEmpty()) {
