@@ -2,6 +2,7 @@ package be.openknx.studio.knxprod;
 
 public record KnxProductCandidate(
         String manufacturerRef,
+        String hardwareRef,
         String hardwareName,
         String originalManufacturerRef,
         String orderNumber,
