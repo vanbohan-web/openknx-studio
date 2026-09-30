@@ -13,6 +13,8 @@ import java.util.HexFormat;
 
 public final class KnxDeviceInfoService {
 
+    private static final int APPLICATION_PROGRAM_OBJECT_TYPE = 3;
+
     public record BasicDeviceInfo(
             String address,
             String deviceDescriptor,
@@ -23,9 +25,23 @@ public final class KnxDeviceInfoService {
             String hardwareType,
             String orderInfo,
             String programVersion,
+            int programManufacturerId,
+            int programApplicationNumber,
+            int programApplicationVersion,
             String programmingMode,
             String maxApduLength
     ) {}
+
+    private record ProgramIdentity(
+            byte[] raw,
+            int manufacturerId,
+            int applicationNumber,
+            int applicationVersion
+    ) {
+        static ProgramIdentity unavailable() {
+            return new ProgramIdentity(null, -1, -1, -1);
+        }
+    }
 
     public BasicDeviceInfo read(String host, String individualAddress)
             throws KNXException, InterruptedException {
@@ -56,13 +72,13 @@ public final class KnxDeviceInfoService {
             catch (KNXException ignored) {
             }
 
-            var manufacturer = readProperty(properties, PropertyAccess.PID.MANUFACTURER_ID);
-            var serial = readProperty(properties, PropertyAccess.PID.SERIAL_NUMBER);
-            var hardwareType = readProperty(properties, 78);
-            var orderInfo = readProperty(properties, PropertyAccess.PID.ORDER_INFO);
-            var program = readProperty(properties, PropertyAccess.PID.PROGRAM_VERSION);
-            var progMode = readProperty(properties, PropertyAccess.PID.PROGMODE);
-            var maxApdu = readProperty(properties, PropertyAccess.PID.MAX_APDULENGTH);
+            var manufacturer = readProperty(properties, 0, PropertyAccess.PID.MANUFACTURER_ID);
+            var serial = readProperty(properties, 0, PropertyAccess.PID.SERIAL_NUMBER);
+            var hardwareType = readProperty(properties, 0, 78);
+            var orderInfo = readProperty(properties, 0, PropertyAccess.PID.ORDER_INFO);
+            var program = readProgramIdentity(properties);
+            var progMode = readProperty(properties, 0, PropertyAccess.PID.PROGMODE);
+            var maxApdu = readProperty(properties, 0, PropertyAccess.PID.MAX_APDULENGTH);
 
             return new BasicDeviceInfo(
                     device.toString(),
@@ -73,16 +89,72 @@ public final class KnxDeviceInfoService {
                     formatHex(serial),
                     formatHex(hardwareType),
                     formatTextOrHex(orderInfo),
-                    formatProgramVersion(program),
+                    formatProgramVersion(program.raw()),
+                    program.manufacturerId(),
+                    program.applicationNumber(),
+                    program.applicationVersion(),
                     formatProgrammingMode(progMode),
                     formatUnsigned(maxApdu)
             );
         }
     }
 
-    private static byte[] readProperty(PropertyClient client, int pid) throws InterruptedException {
+    private static ProgramIdentity readProgramIdentity(PropertyClient client) throws InterruptedException {
+        byte[] data = readApplicationProgramObject(client);
+
+        if (data == null || data.length == 0) {
+            // Older masks sometimes expose it directly on object 0.
+            data = readProperty(client, 0, PropertyAccess.PID.PROGRAM_VERSION);
+        }
+
+        if (data == null || data.length != 5) {
+            return ProgramIdentity.unavailable();
+        }
+
+        int manufacturer = ((data[0] & 0xff) << 8) | (data[1] & 0xff);
+        int application = ((data[2] & 0xff) << 8) | (data[3] & 0xff);
+        int version = data[4] & 0xff;
+
+        return new ProgramIdentity(data, manufacturer, application, version);
+    }
+
+    private static byte[] readApplicationProgramObject(PropertyClient client) throws InterruptedException {
         try {
-            return client.getProperty(0, pid, 1, 1);
+            var countData = client.getProperty(0, PropertyAccess.PID.IO_LIST, 0, 1);
+            int objectCount = (int) unsigned(countData);
+
+            if (objectCount <= 0 || objectCount > 100) {
+                return null;
+            }
+
+            var ioList = client.getProperty(0, PropertyAccess.PID.IO_LIST, 1, objectCount);
+            if (ioList == null || ioList.length < objectCount * 2) {
+                return null;
+            }
+
+            for (int objectIndex = 0; objectIndex < objectCount; objectIndex++) {
+                int offset = objectIndex * 2;
+                int objectType = ((ioList[offset] & 0xff) << 8) | (ioList[offset + 1] & 0xff);
+
+                if (objectType == APPLICATION_PROGRAM_OBJECT_TYPE) {
+                    var program = readProperty(client, objectIndex, PropertyAccess.PID.PROGRAM_VERSION);
+                    if (program != null && program.length > 0) {
+                        return program;
+                    }
+                }
+            }
+        }
+        catch (KNXException | RuntimeException e) {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static byte[] readProperty(PropertyClient client, int objectIndex, int pid)
+            throws InterruptedException {
+        try {
+            return client.getProperty(objectIndex, pid, 1, 1);
         }
         catch (KNXException | RuntimeException e) {
             return null;
@@ -91,10 +163,10 @@ public final class KnxDeviceInfoService {
 
     private static String systemType(String descriptor) {
         return switch (descriptor) {
-            case "0x0701", "0x0705" -> "System 7";
-            case "0x0012" -> "System 1";
-            case "0x0021", "0x0025" -> "System 2";
-            case "0x07B0", "0x17B0" -> "System B";
+            case "0x0700", "0x0701", "0x0705" -> "System 7";
+            case "0x0010", "0x0011", "0x0012" -> "System 1";
+            case "0x0020", "0x0021", "0x0025" -> "System 2";
+            case "0x07B0", "0x17B0", "0x27B0", "0x57B0" -> "System B";
             default -> "onbekend / niet herkend";
         };
     }
@@ -174,8 +246,9 @@ public final class KnxDeviceInfoService {
         if (data.length == 5) {
             int manufacturer = ((data[0] & 0xff) << 8) | (data[1] & 0xff);
             int application = ((data[2] & 0xff) << 8) | (data[3] & 0xff);
-            int major = (data[4] & 0xff) >> 4;
-            int minor = data[4] & 0x0f;
+            int version = data[4] & 0xff;
+            int major = version >> 4;
+            int minor = version & 0x0f;
             return "fabrikant " + manufacturer
                     + ", applicatie 0x" + String.format("%04X", application)
                     + ", v" + major + "." + minor;
@@ -197,6 +270,10 @@ public final class KnxDeviceInfoService {
     }
 
     private static long unsigned(byte[] data) {
+        if (data == null) {
+            return 0;
+        }
+
         long value = 0;
         for (byte b : data) {
             value = (value << 8) | (b & 0xff);
