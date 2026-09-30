@@ -1,6 +1,7 @@
 package be.openknx.studio;
 
 import be.openknx.studio.knx.KnxConnectionService;
+import be.openknx.studio.knx.KnxDeviceInfoService;
 import be.openknx.studio.knx.KnxDeviceScanService;
 import be.openknx.studio.knx.KnxDiscoveryService;
 import be.openknx.studio.knx.KnxGroupMonitorService;
@@ -20,6 +21,7 @@ public final class OpenKnxStudioApp extends Application {
     private final KnxConnectionService connectionService = new KnxConnectionService();
     private final KnxGroupMonitorService monitorService = new KnxGroupMonitorService();
     private final KnxDeviceScanService deviceScanService = new KnxDeviceScanService();
+    private final KnxDeviceInfoService deviceInfoService = new KnxDeviceInfoService();
 
     private final TextArea log = new TextArea();
     private final TextField routerIp = new TextField();
@@ -50,6 +52,12 @@ public final class OpenKnxStudioApp extends Application {
 
         var connectButton = new Button("Test verbinding");
         var scanButton = new Button("Scan apparaten");
+
+        var deviceAddressField = new TextField();
+        deviceAddressField.setPromptText("bv. 1.1.15");
+        deviceAddressField.setPrefColumnCount(10);
+        var deviceInfoButton = new Button("Lees apparaatinfo");
+
         var startMonitorButton = new Button("Start busmonitor");
         var stopMonitorButton = new Button("Stop busmonitor");
         stopMonitorButton.setDisable(true);
@@ -188,6 +196,40 @@ public final class OpenKnxStudioApp extends Application {
                     }));
         });
 
+        deviceInfoButton.setOnAction(event -> {
+            deviceInfoButton.setDisable(true);
+            status.setText("Apparaatinformatie lezen...");
+            append("\n--- Apparaatinfo " + deviceAddressField.getText().trim() + " ---");
+
+            CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return deviceInfoService.read(routerIp.getText(), deviceAddressField.getText());
+                        }
+                        catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .whenComplete((info, error) -> Platform.runLater(() -> {
+                        deviceInfoButton.setDisable(false);
+
+                        if (error != null) {
+                            status.setText("Apparaatinfo lezen mislukt");
+                            append("Fout: " + rootMessage(error));
+                            return;
+                        }
+
+                        status.setText("Apparaatinfo gelezen van " + info.address());
+                        append("Fysiek adres:       " + info.address());
+                        append("Device descriptor:  " + info.deviceDescriptor());
+                        append("Manufacturer ID:    " + info.manufacturerId());
+                        append("Serienummer:        " + info.serialNumber());
+                        append("Program version:    " + info.programVersion());
+                        append("Programmeerstand:   " + info.programmingMode());
+                        append("Max. APDU-lengte:   " + info.maxApduLength());
+                    }));
+        });
+
         startMonitorButton.setOnAction(event -> {
             discoverButton.setDisable(true);
             connectButton.setDisable(true);
@@ -249,6 +291,12 @@ public final class OpenKnxStudioApp extends Application {
                 scanButton
         );
 
+        var deviceInfoRow = new HBox(10,
+                new Label("Fysiek adres:"),
+                deviceAddressField,
+                deviceInfoButton
+        );
+
         var actionRow = new HBox(10,
                 discoverButton,
                 startMonitorButton,
@@ -257,7 +305,7 @@ public final class OpenKnxStudioApp extends Application {
         );
 
         var top = new VBox(6, title, subtitle);
-        var controls = new VBox(12, ipRow, scanRow, actionRow);
+        var controls = new VBox(12, ipRow, scanRow, deviceInfoRow, actionRow);
 
         var statusBar = new HBox(8, new Label("Status:"), status);
         statusBar.setStyle("-fx-padding: 8 0 0 0;");
