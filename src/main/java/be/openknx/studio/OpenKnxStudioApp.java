@@ -487,7 +487,7 @@ public final class OpenKnxStudioApp extends Application {
 
         var program = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Applicatie");
         program.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().programVersion()));
-        program.setPrefWidth(170);
+        program.setPrefWidth(270);
 
         deviceTable.getColumns().addAll(
                 address, manufacturer, mask, system, serial, hardware, orderInfo, product, program
@@ -499,7 +499,21 @@ public final class OpenKnxStudioApp extends Application {
             var row = new TableRow<KnxDeviceInfoService.BasicDeviceInfo>();
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && !row.isEmpty()) {
-                    deviceAddressField.setText(row.getItem().address());
+                    var info = row.getItem();
+                    deviceAddressField.setText(info.address());
+
+                    append("\n--- Productkandidaten " + info.address() + " ---");
+                    append("Applicatie: " + info.programVersion());
+                    append("Hardware-ID: " + info.hardwareType());
+
+                    var matches = productMatcher.describeMatches(info, productCatalog);
+                    if (matches.isEmpty()) {
+                        append("Geen productkandidaten gevonden.");
+                    }
+                    else {
+                        append("Overblijvende kandidaten: " + matches.size());
+                        matches.forEach(candidate -> append("  • " + candidate));
+                    }
                 }
             });
             return row;
