@@ -112,8 +112,11 @@ public final class KnxProductMatcher {
             return "geen .knxprod geladen";
         }
 
-        var matches = match(device, catalog);
-        if (matches.isEmpty()) {
+        return summarizeCandidates(match(device, catalog));
+    }
+
+    public String summarizeCandidates(List<KnxProductCandidate> matches) {
+        if (matches == null || matches.isEmpty()) {
             return "geen match";
         }
 
