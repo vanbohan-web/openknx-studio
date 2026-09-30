@@ -75,7 +75,9 @@ public final class OpenKnxStudioApp extends Application {
         deviceAddressField.setPrefColumnCount(10);
         var deviceInfoButton = new Button("Lees apparaatinfo");
 
-        var importKnxProdButton = new Button("Importeer .knxprod");
+        var importKnxProdButton = new Button("Importeer productdatabase");
+        var clearCatalogButton = new Button("Wis productdatabase");
+        clearCatalogButton.setDisable(true);
         var catalogStatus = new Label("Geen productdatabase geladen");
 
         var startMonitorButton = new Button("Start busmonitor");
@@ -282,8 +284,10 @@ public final class OpenKnxStudioApp extends Application {
         importKnxProdButton.setOnAction(event -> {
             var chooser = new FileChooser();
             chooser.setTitle("KNX productbestanden importeren");
-            chooser.getExtensionFilters().add(
-                    new FileChooser.ExtensionFilter("KNX productbestanden (*.knxprod)", "*.knxprod")
+            chooser.getExtensionFilters().addAll(
+                    new FileChooser.ExtensionFilter("KNX productbestanden (*.knxprod, *.zip)", "*.knxprod", "*.zip"),
+                    new FileChooser.ExtensionFilter("KNXPROD", "*.knxprod"),
+                    new FileChooser.ExtensionFilter("ZIP-bundels", "*.zip")
             );
 
             var files = chooser.showOpenMultipleDialog(stage);
@@ -315,17 +319,30 @@ public final class OpenKnxStudioApp extends Application {
                             return;
                         }
 
-                        productCatalog = catalog;
-                        var products = catalog.stream()
+                        var merged = new java.util.LinkedHashSet<KnxProductCandidate>(productCatalog);
+                        merged.addAll(catalog);
+                        productCatalog = List.copyOf(merged);
+
+                        var products = productCatalog.stream()
                                 .map(KnxProductCandidate::displayName)
                                 .distinct()
                                 .count();
 
-                        catalogStatus.setText(products + " product(en) / " + catalog.size() + " koppelingen geladen");
+                        catalogStatus.setText(products + " product(en) / " + productCatalog.size() + " koppelingen geladen");
+                        clearCatalogButton.setDisable(productCatalog.isEmpty());
                         status.setText("KNX-productdatabase geladen");
-                        append("KNXPROD klaar: " + products + " unieke producten, " + catalog.size() + " product/app-koppelingen.");
+                        append("KNX-productdatabase klaar: " + products + " unieke producten, " + productCatalog.size() + " product/app-koppelingen totaal.");
                         deviceTable.refresh();
                     }));
+        });
+
+        clearCatalogButton.setOnAction(event -> {
+            productCatalog = List.of();
+            catalogStatus.setText("Geen productdatabase geladen");
+            clearCatalogButton.setDisable(true);
+            deviceTable.refresh();
+            status.setText("Productdatabase gewist");
+            append("Productdatabase uit OpenKNX Studio verwijderd.");
         });
 
         startMonitorButton.setOnAction(event -> {
@@ -398,6 +415,7 @@ public final class OpenKnxStudioApp extends Application {
 
         var productRow = new HBox(10,
                 importKnxProdButton,
+                clearCatalogButton,
                 catalogStatus
         );
 
