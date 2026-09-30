@@ -28,14 +28,15 @@ Calimero levert de KNXnet/IP-communicatielaag; OpenKNX Studio bouwt daar een een
 
 1. Windows-pc op hetzelfde netwerk als de KNX/IP-router
 2. JDK 21
-3. Gradle 8+
-4. Weinzierl KNX IP Router 751 aangesloten op LAN en KNX TP
+3. Weinzierl KNX IP Router 751 aangesloten op LAN en KNX TP
 
 ## Starten
 
-```bash
-gradle run
+```bat
+run-windows.bat
 ```
+
+De Gradle Wrapper zit in het project, dus je hoeft Gradle niet apart te installeren. De eerste keer wordt Gradle 8.10.2 automatisch gedownload.
 
 Klik daarna op **Zoek KNX/IP**. De Weinzierl 751 hoort binnen enkele seconden in de resultaten te verschijnen.
 
