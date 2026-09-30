@@ -140,23 +140,28 @@ public final class KnxDeviceInfoService {
             return "niet beschikbaar";
         }
 
-        int end = data.length;
-        while (end > 0 && (data[end - 1] == 0 || data[end - 1] == (byte) 0xff)) {
-            end--;
+        boolean allFF = true;
+        for (byte b : data) {
+            if ((b & 0xff) != 0xff) {
+                allFF = false;
+                break;
+            }
+        }
+        if (allFF) {
+            return "niet ondersteund";
         }
 
-        if (end > 0) {
-            boolean printable = true;
-            for (int i = 0; i < end; i++) {
-                int ch = data[i] & 0xff;
-                if (ch < 32 || ch > 126) {
-                    printable = false;
-                    break;
-                }
+        int printableEnd = 0;
+        while (printableEnd < data.length) {
+            int ch = data[printableEnd] & 0xff;
+            if (ch < 32 || ch > 126) {
+                break;
             }
-            if (printable) {
-                return new String(data, 0, end, java.nio.charset.StandardCharsets.US_ASCII);
-            }
+            printableEnd++;
+        }
+
+        if (printableEnd >= 4) {
+            return new String(data, 0, printableEnd, java.nio.charset.StandardCharsets.US_ASCII);
         }
 
         return formatHex(data);
