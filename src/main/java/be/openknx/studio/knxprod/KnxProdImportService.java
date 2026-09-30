@@ -243,6 +243,41 @@ public final class KnxProdImportService {
         }
 
         var samples = new ArrayList<KnxMemorySample>();
+
+        // Product procedures can carry explicit read-only memory comparisons.
+        // These are especially valuable fingerprints because ETS itself uses
+        // them as precondition checks.
+        var compareNodes = application.getElementsByTagNameNS("*", "LdCtrlCompareMem");
+        for (int i = 0; i < compareNodes.getLength() && samples.size() < maxSamples; i++) {
+            var compare = (Element) compareNodes.item(i);
+            int address = parseInt(attr(compare, "Address"));
+            int size = parseInt(attr(compare, "Size"));
+            var data = decodeInlineHex(attr(compare, "InlineData"));
+
+            if (address < 0 || data.length == 0) {
+                continue;
+            }
+
+            int length = data.length;
+            if (size > 0) {
+                length = Math.min(length, size);
+            }
+            if (length <= 0) {
+                continue;
+            }
+
+            var expected = java.util.Arrays.copyOf(data, length);
+            var mask = new byte[length];
+            java.util.Arrays.fill(mask, (byte) 0xff);
+
+            samples.add(new KnxMemorySample(
+                    address,
+                    "LdCtrlCompareMem@" + String.format("0x%04X", address),
+                    HexFormat.of().withUpperCase().formatHex(expected),
+                    HexFormat.of().withUpperCase().formatHex(mask)
+            ));
+        }
+
         var segmentNodes = application.getElementsByTagNameNS("*", "AbsoluteSegment");
 
         for (int i = 0; i < segmentNodes.getLength() && samples.size() < maxSamples; i++) {
@@ -309,6 +344,24 @@ public final class KnxProdImportService {
         }
 
         return List.copyOf(samples);
+    }
+
+    private static byte[] decodeInlineHex(String value) {
+        if (value == null || value.isBlank()) {
+            return new byte[0];
+        }
+
+        var compact = value.replaceAll("[^0-9A-Fa-f]", "");
+        if (compact.isEmpty() || compact.length() % 2 != 0) {
+            return new byte[0];
+        }
+
+        try {
+            return HexFormat.of().parseHex(compact);
+        }
+        catch (IllegalArgumentException e) {
+            return new byte[0];
+        }
     }
 
     private static byte[] decodePayload(String value) {
