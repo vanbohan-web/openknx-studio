@@ -29,6 +29,21 @@ public final class KnxProductMatcher {
             return base;
         }
 
+        // Some OEM-based devices (notably older JUNG/System-7 hardware)
+        // encode the original KNX manufacturer in the first two bytes of PID 78.
+        // Use that as an additional read-only filter when product data exposes
+        // Hardware@OriginalManufacturer.
+        var originalManufacturer = originalManufacturerRefFromHardwareType(hardwareType);
+        if (!originalManufacturer.isBlank()) {
+            var originalMatches = base.stream()
+                    .filter(candidate -> !candidate.originalManufacturerRef().isBlank())
+                    .filter(candidate -> originalManufacturer.equalsIgnoreCase(candidate.originalManufacturerRef()))
+                    .toList();
+            if (!originalMatches.isEmpty()) {
+                base = originalMatches;
+            }
+        }
+
         if (!hardwareType.isBlank()) {
             var exactHardware = base.stream()
                     .filter(candidate -> !candidate.hardwareTypeMarker().isBlank())
@@ -149,6 +164,25 @@ public final class KnxProductMatcher {
         }
 
         return value;
+    }
+
+    private static String originalManufacturerRefFromHardwareType(String hardwareType) {
+        if (hardwareType == null || hardwareType.length() < 4) {
+            return "";
+        }
+
+        var prefix = hardwareType.substring(0, 4);
+        if ("0000".equals(prefix)) {
+            return "";
+        }
+
+        try {
+            int id = Integer.parseInt(prefix, 16);
+            return String.format("M-%04X", id);
+        }
+        catch (RuntimeException e) {
+            return "";
+        }
     }
 
     private static String manufacturerRef(String formattedId) {
