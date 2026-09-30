@@ -34,8 +34,43 @@ public final class KnxProdImportService {
     public List<KnxProductCandidate> importFiles(List<File> files) throws Exception {
         var all = new ArrayList<KnxProductCandidate>();
         for (var file : files) {
-            all.addAll(importFile(file));
+            var name = file.getName().toLowerCase();
+            if (name.endsWith(".knxprod")) {
+                all.addAll(importFile(file));
+            }
+            else if (name.endsWith(".zip")) {
+                all.addAll(importBundleZip(file));
+            }
         }
+        return List.copyOf(all);
+    }
+
+    private List<KnxProductCandidate> importBundleZip(File bundle) throws Exception {
+        var all = new ArrayList<KnxProductCandidate>();
+
+        try (var zip = new ZipFile(bundle)) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                var entry = entries.nextElement();
+                if (entry.isDirectory() || !entry.getName().toLowerCase().endsWith(".knxprod")) {
+                    continue;
+                }
+
+                var temp = java.nio.file.Files.createTempFile("openknx-", ".knxprod");
+                try (var in = zip.getInputStream(entry)) {
+                    java.nio.file.Files.copy(
+                            in,
+                            temp,
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    );
+                    all.addAll(importFile(temp.toFile()));
+                }
+                finally {
+                    java.nio.file.Files.deleteIfExists(temp);
+                }
+            }
+        }
+
         return List.copyOf(all);
     }
 
