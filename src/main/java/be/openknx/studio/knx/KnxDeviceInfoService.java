@@ -16,7 +16,9 @@ public final class KnxDeviceInfoService {
     public record BasicDeviceInfo(
             String address,
             String deviceDescriptor,
+            String systemType,
             String manufacturerId,
+            String manufacturerName,
             String serialNumber,
             String programVersion,
             String programmingMode,
@@ -61,7 +63,9 @@ public final class KnxDeviceInfoService {
             return new BasicDeviceInfo(
                     device.toString(),
                     descriptor,
+                    systemType(descriptor),
                     formatManufacturer(manufacturer),
+                    manufacturerName(manufacturer),
                     formatHex(serial),
                     formatProgramVersion(program),
                     formatProgrammingMode(progMode),
@@ -77,6 +81,38 @@ public final class KnxDeviceInfoService {
         catch (KNXException | RuntimeException e) {
             return null;
         }
+    }
+
+    private static String systemType(String descriptor) {
+        return switch (descriptor) {
+            case "0x0701", "0x0705" -> "System 7";
+            case "0x0012" -> "System 1";
+            case "0x0021", "0x0025" -> "System 2";
+            case "0x07B0", "0x17B0" -> "System B";
+            default -> "onbekend / niet herkend";
+        };
+    }
+
+    private static String manufacturerName(byte[] data) {
+        if (data == null || data.length == 0) {
+            return "niet beschikbaar";
+        }
+        return switch ((int) unsigned(data)) {
+            case 1 -> "Siemens";
+            case 2 -> "ABB";
+            case 4 -> "Albrecht Jung";
+            case 5 -> "BTicino";
+            case 6 -> "Berker";
+            case 7 -> "Busch-Jaeger Elektro";
+            case 11 -> "Legrand";
+            case 12 -> "Merten";
+            case 61 -> "WAGO";
+            case 72 -> "Theben";
+            case 113 -> "Zennio";
+            case 128 -> "ESYLUX";
+            case 131 -> "MDT technologies";
+            default -> "onbekend (ID " + unsigned(data) + ")";
+        };
     }
 
     private static String formatManufacturer(byte[] data) {
