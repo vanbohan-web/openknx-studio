@@ -26,6 +26,7 @@ public final class KnxProdImportService {
 
     private record HardwareInfo(
             String manufacturerRef,
+            String hardwareRef,
             String hardwareName,
             String originalManufacturerRef,
             List<ProductInfo> products,
@@ -104,6 +105,7 @@ public final class KnxProdImportService {
                 if (hw.applicationRefs().isEmpty()) {
                     out.add(new KnxProductCandidate(
                             hw.manufacturerRef(),
+                            hw.hardwareRef(),
                             hw.hardwareName(),
                             hw.originalManufacturerRef(),
                             product.orderNumber(),
@@ -122,6 +124,7 @@ public final class KnxProdImportService {
                     var app = apps.get(appRef);
                     out.add(new KnxProductCandidate(
                             hw.manufacturerRef(),
+                            hw.hardwareRef(),
                             hw.hardwareName(),
                             hw.originalManufacturerRef(),
                             product.orderNumber(),
@@ -179,6 +182,7 @@ public final class KnxProdImportService {
         for (int i = 0; i < hwNodes.getLength(); i++) {
             var element = (Element) hwNodes.item(i);
             var manufacturerRef = manufacturerRef(element);
+            var hardwareRef = attr(element, "Id");
             var hwName = firstNonBlank(attr(element, "Name"), attr(element, "SerialNumber"));
             var originalManufacturerRef = attr(element, "OriginalManufacturer");
 
@@ -207,6 +211,7 @@ public final class KnxProdImportService {
 
             hardware.add(new HardwareInfo(
                     manufacturerRef,
+                    hardwareRef,
                     hwName,
                     originalManufacturerRef,
                     List.copyOf(products),
