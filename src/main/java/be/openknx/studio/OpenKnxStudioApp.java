@@ -5,8 +5,11 @@ import be.openknx.studio.knx.KnxDeviceInfoService;
 import be.openknx.studio.knx.KnxDeviceScanService;
 import be.openknx.studio.knx.KnxDiscoveryService;
 import be.openknx.studio.knx.KnxGroupMonitorService;
+import be.openknx.studio.knx.KnxInventoryService;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
@@ -22,9 +25,12 @@ public final class OpenKnxStudioApp extends Application {
     private final KnxGroupMonitorService monitorService = new KnxGroupMonitorService();
     private final KnxDeviceScanService deviceScanService = new KnxDeviceScanService();
     private final KnxDeviceInfoService deviceInfoService = new KnxDeviceInfoService();
+    private final KnxInventoryService inventoryService =
+            new KnxInventoryService(deviceScanService, deviceInfoService);
 
     private final TextArea log = new TextArea();
     private final TextField routerIp = new TextField();
+    private final TableView<KnxDeviceInfoService.BasicDeviceInfo> deviceTable = new TableView<>();
 
     @Override
     public void start(Stage stage) {
@@ -51,7 +57,8 @@ public final class OpenKnxStudioApp extends Application {
         discoverButton.setDefaultButton(true);
 
         var connectButton = new Button("Test verbinding");
-        var scanButton = new Button("Scan apparaten");
+        var scanButton = new Button("Scan adressen");
+        var inventoryButton = new Button("Scan + herken apparaten");
 
         var deviceAddressField = new TextField();
         deviceAddressField.setPromptText("bv. 1.1.15");
@@ -65,28 +72,26 @@ public final class OpenKnxStudioApp extends Application {
         var clearButton = new Button("Log wissen");
         var status = new Label("Klaar");
 
+        configureDeviceTable(deviceAddressField);
+
         log.setEditable(false);
         log.setWrapText(false);
-        log.setPrefRowCount(20);
+        log.setPrefRowCount(14);
         log.setStyle("-fx-font-family: 'Consolas';");
 
         log.setText("""
                 Welkom bij OpenKNX Studio.
 
-                1. Klik op 'Zoek KNX/IP'.
-                2. Vul het IP-adres van je Weinzierl KNX IP Router 751 in.
-                3. Klik op 'Test verbinding'.
-                4. Gebruik 'Start busmonitor' om groepstelegrammen te bekijken.
-                5. Gebruik 'Scan apparaten' om fysieke KNX-adressen op een lijn te zoeken.
+                • Zoek eerst je KNX/IP-router en test de verbinding.
+                • 'Scan adressen' zoekt alleen reagerende fysieke adressen.
+                • 'Scan + herken apparaten' maakt automatisch een inventaris met fabrikant en maskversie.
+                • Dubbelklik een toestel in de tabel om het fysieke adres over te nemen.
 
-                De scan leest alleen welke adressen reageren. Er worden geen adressen of parameters gewijzigd.
+                Alle functies in deze versie zijn read-only.
                 """);
 
         discoverButton.setOnAction(event -> {
-            discoverButton.setDisable(true);
-            connectButton.setDisable(true);
-            scanButton.setDisable(true);
-            startMonitorButton.setDisable(true);
+            setBusy(true, discoverButton, connectButton, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
             status.setText("KNX/IP-apparaten zoeken...");
             append("\n--- Discovery gestart ---");
 
@@ -100,9 +105,7 @@ public final class OpenKnxStudioApp extends Application {
                         }
                     })
                     .whenComplete((results, error) -> Platform.runLater(() -> {
-                        discoverButton.setDisable(false);
-                        connectButton.setDisable(false);
-                        scanButton.setDisable(false);
+                        setBusy(false, discoverButton, connectButton, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
                         startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
@@ -125,10 +128,7 @@ public final class OpenKnxStudioApp extends Application {
         });
 
         connectButton.setOnAction(event -> {
-            discoverButton.setDisable(true);
-            connectButton.setDisable(true);
-            scanButton.setDisable(true);
-            startMonitorButton.setDisable(true);
+            setBusy(true, discoverButton, connectButton, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
             status.setText("Tunnelingverbinding testen...");
             append("\n--- Verbindingstest naar " + routerIp.getText().trim() + " ---");
 
@@ -142,9 +142,7 @@ public final class OpenKnxStudioApp extends Application {
                         }
                     })
                     .whenComplete((name, error) -> Platform.runLater(() -> {
-                        discoverButton.setDisable(false);
-                        connectButton.setDisable(false);
-                        scanButton.setDisable(false);
+                        setBusy(false, discoverButton, connectButton, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
                         startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
@@ -163,8 +161,9 @@ public final class OpenKnxStudioApp extends Application {
             var line = lineField.getValue();
 
             scanButton.setDisable(true);
+            inventoryButton.setDisable(true);
             status.setText("KNX-lijn " + area + "." + line + " scannen...");
-            append("\n--- Apparaten scan " + area + "." + line + ".[0..255] ---");
+            append("\n--- Adressenscan " + area + "." + line + ".[0..255] ---");
 
             CompletableFuture
                     .supplyAsync(() -> {
@@ -177,6 +176,7 @@ public final class OpenKnxStudioApp extends Application {
                     })
                     .whenComplete((devices, error) -> Platform.runLater(() -> {
                         scanButton.setDisable(false);
+                        inventoryButton.setDisable(false);
 
                         if (error != null) {
                             status.setText("Apparatenscan mislukt");
@@ -193,6 +193,56 @@ public final class OpenKnxStudioApp extends Application {
 
                         append("Gevonden fysieke adressen:");
                         devices.forEach(address -> append("  • " + address));
+                    }));
+        });
+
+        inventoryButton.setOnAction(event -> {
+            var area = areaField.getValue();
+            var line = lineField.getValue();
+
+            setBusy(true, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
+            deviceTable.getItems().clear();
+            status.setText("Inventaris starten...");
+            append("\n--- Automatische inventaris " + area + "." + line + " ---");
+
+            CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return inventoryService.scanAndIdentify(
+                                    routerIp.getText(),
+                                    area,
+                                    line,
+                                    (currentDevice, totalDevices) -> Platform.runLater(() ->
+                                            status.setText("Apparaat " + currentDevice + " van " + totalDevices + " uitlezen...")
+                                    )
+                            );
+                        }
+                        catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .whenComplete((devices, error) -> Platform.runLater(() -> {
+                        setBusy(false, scanButton, inventoryButton, deviceInfoButton, startMonitorButton);
+                        startMonitorButton.setDisable(monitorService.isRunning());
+
+                        if (error != null) {
+                            status.setText("Inventaris mislukt");
+                            append("Fout tijdens inventaris: " + rootMessage(error));
+                            return;
+                        }
+
+                        deviceTable.setItems(FXCollections.observableArrayList(devices));
+                        status.setText(devices.size() + " apparaten geïnventariseerd op " + area + "." + line);
+                        append("Inventaris klaar: " + devices.size() + " apparaten.");
+                        for (var info : devices) {
+                            append(String.format(
+                                    "  %-8s  %-20s  %-8s  %s",
+                                    info.address(),
+                                    info.manufacturerName(),
+                                    info.deviceDescriptor(),
+                                    info.systemType()
+                            ));
+                        }
                     }));
         });
 
@@ -220,15 +270,7 @@ public final class OpenKnxStudioApp extends Application {
                         }
 
                         status.setText("Apparaatinfo gelezen van " + info.address());
-                        append("Fysiek adres:       " + info.address());
-                        append("Device descriptor:  " + info.deviceDescriptor());
-                        append("Systeemtype:         " + info.systemType());
-                        append("Manufacturer ID:    " + info.manufacturerId());
-                        append("Fabrikant:          " + info.manufacturerName());
-                        append("Serienummer:        " + info.serialNumber());
-                        append("Program version:    " + info.programVersion());
-                        append("Programmeerstand:   " + info.programmingMode());
-                        append("Max. APDU-lengte:   " + info.maxApduLength());
+                        appendDeviceInfo(info);
                     }));
         });
 
@@ -290,7 +332,8 @@ public final class OpenKnxStudioApp extends Application {
                 areaField,
                 new Label("Lijn:"),
                 lineField,
-                scanButton
+                scanButton,
+                inventoryButton
         );
 
         var deviceInfoRow = new HBox(10,
@@ -309,19 +352,78 @@ public final class OpenKnxStudioApp extends Application {
         var top = new VBox(6, title, subtitle);
         var controls = new VBox(12, ipRow, scanRow, deviceInfoRow, actionRow);
 
+        var tabs = new TabPane();
+        var devicesTab = new Tab("Apparaten", deviceTable);
+        devicesTab.setClosable(false);
+        var logTab = new Tab("Log", log);
+        logTab.setClosable(false);
+        tabs.getTabs().addAll(devicesTab, logTab);
+
         var statusBar = new HBox(8, new Label("Status:"), status);
         statusBar.setStyle("-fx-padding: 8 0 0 0;");
 
-        var root = new VBox(16, top, new Separator(), controls, log, statusBar);
+        var root = new VBox(16, top, new Separator(), controls, tabs, statusBar);
         root.setPadding(new Insets(20));
-        VBox.setVgrow(log, Priority.ALWAYS);
+        VBox.setVgrow(tabs, Priority.ALWAYS);
 
-        var scene = new Scene(root, 940, 700);
+        var scene = new Scene(root, 1120, 760);
         stage.setScene(scene);
-        stage.setMinWidth(760);
-        stage.setMinHeight(560);
+        stage.setMinWidth(900);
+        stage.setMinHeight(620);
         stage.setOnCloseRequest(event -> monitorService.stop());
         stage.show();
+    }
+
+    private void configureDeviceTable(TextField deviceAddressField) {
+        var address = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Adres");
+        address.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().address()));
+        address.setPrefWidth(90);
+
+        var manufacturer = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Fabrikant");
+        manufacturer.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().manufacturerName()));
+        manufacturer.setPrefWidth(180);
+
+        var mask = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Mask");
+        mask.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().deviceDescriptor()));
+        mask.setPrefWidth(95);
+
+        var system = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Systeem");
+        system.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().systemType()));
+        system.setPrefWidth(120);
+
+        var serial = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Serienummer");
+        serial.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().serialNumber()));
+        serial.setPrefWidth(160);
+
+        var program = new TableColumn<KnxDeviceInfoService.BasicDeviceInfo, String>("Applicatie");
+        program.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().programVersion()));
+        program.setPrefWidth(250);
+
+        deviceTable.getColumns().addAll(address, manufacturer, mask, system, serial, program);
+        deviceTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        deviceTable.setPlaceholder(new Label("Nog geen inventaris gemaakt."));
+
+        deviceTable.setRowFactory(table -> {
+            var row = new TableRow<KnxDeviceInfoService.BasicDeviceInfo>();
+            row.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && !row.isEmpty()) {
+                    deviceAddressField.setText(row.getItem().address());
+                }
+            });
+            return row;
+        });
+    }
+
+    private void appendDeviceInfo(KnxDeviceInfoService.BasicDeviceInfo info) {
+        append("Fysiek adres:       " + info.address());
+        append("Device descriptor:  " + info.deviceDescriptor());
+        append("Systeemtype:         " + info.systemType());
+        append("Manufacturer ID:    " + info.manufacturerId());
+        append("Fabrikant:          " + info.manufacturerName());
+        append("Serienummer:        " + info.serialNumber());
+        append("Program version:    " + info.programVersion());
+        append("Programmeerstand:   " + info.programmingMode());
+        append("Max. APDU-lengte:   " + info.maxApduLength());
     }
 
     private void append(String text) {
@@ -330,6 +432,12 @@ public final class OpenKnxStudioApp extends Application {
         }
         log.appendText(text + "\n");
         log.positionCaret(log.getLength());
+    }
+
+    private static void setBusy(boolean busy, Button... buttons) {
+        for (var button : buttons) {
+            button.setDisable(busy);
+        }
     }
 
     private static String rootMessage(Throwable throwable) {
