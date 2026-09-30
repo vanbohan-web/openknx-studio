@@ -2,6 +2,7 @@ package be.openknx.studio;
 
 import be.openknx.studio.knx.KnxConnectionService;
 import be.openknx.studio.knx.KnxDiscoveryService;
+import be.openknx.studio.knx.KnxGroupMonitorService;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -16,6 +17,7 @@ public final class OpenKnxStudioApp extends Application {
 
     private final KnxDiscoveryService discoveryService = new KnxDiscoveryService();
     private final KnxConnectionService connectionService = new KnxConnectionService();
+    private final KnxGroupMonitorService monitorService = new KnxGroupMonitorService();
 
     private final TextArea log = new TextArea();
     private final TextField routerIp = new TextField();
@@ -37,14 +39,18 @@ public final class OpenKnxStudioApp extends Application {
         discoverButton.setDefaultButton(true);
 
         var connectButton = new Button("Test verbinding");
+        var startMonitorButton = new Button("Start busmonitor");
+        var stopMonitorButton = new Button("Stop busmonitor");
+        stopMonitorButton.setDisable(true);
 
         var clearButton = new Button("Log wissen");
-
         var status = new Label("Klaar");
 
         log.setEditable(false);
-        log.setWrapText(true);
+        log.setWrapText(false);
         log.setPrefRowCount(20);
+        log.setStyle("-fx-font-family: 'Consolas';");
+
         log.setText("""
                 Welkom bij OpenKNX Studio.
 
@@ -52,13 +58,15 @@ public final class OpenKnxStudioApp extends Application {
                 2. Zoek in de resultaten naar je Weinzierl KNX IP Router 751.
                 3. Vul het IP-adres in.
                 4. Klik op 'Test verbinding'.
+                5. Start daarna de busmonitor.
 
-                Deze versie schrijft nog niets naar de KNX-bus.
+                De busmonitor luistert alleen. Deze versie schrijft nog niets naar de KNX-bus.
                 """);
 
         discoverButton.setOnAction(event -> {
             discoverButton.setDisable(true);
             connectButton.setDisable(true);
+            startMonitorButton.setDisable(true);
             status.setText("KNX/IP-apparaten zoeken...");
             append("\n--- Discovery gestart ---");
 
@@ -66,13 +74,15 @@ public final class OpenKnxStudioApp extends Application {
                     .supplyAsync(() -> {
                         try {
                             return discoveryService.discover();
-                        } catch (Exception e) {
+                        }
+                        catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                     })
                     .whenComplete((results, error) -> Platform.runLater(() -> {
                         discoverButton.setDisable(false);
                         connectButton.setDisable(false);
+                        startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
                             status.setText("Zoeken mislukt");
@@ -96,6 +106,7 @@ public final class OpenKnxStudioApp extends Application {
         connectButton.setOnAction(event -> {
             discoverButton.setDisable(true);
             connectButton.setDisable(true);
+            startMonitorButton.setDisable(true);
             status.setText("Tunnelingverbinding testen...");
             append("\n--- Verbindingstest naar " + routerIp.getText().trim() + " ---");
 
@@ -103,13 +114,15 @@ public final class OpenKnxStudioApp extends Application {
                     .supplyAsync(() -> {
                         try {
                             return connectionService.testConnection(routerIp.getText());
-                        } catch (Exception e) {
+                        }
+                        catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                     })
                     .whenComplete((name, error) -> Platform.runLater(() -> {
                         discoverButton.setDisable(false);
                         connectButton.setDisable(false);
+                        startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
                             status.setText("Verbinding mislukt");
@@ -122,6 +135,51 @@ public final class OpenKnxStudioApp extends Application {
                     }));
         });
 
+        startMonitorButton.setOnAction(event -> {
+            discoverButton.setDisable(true);
+            connectButton.setDisable(true);
+            startMonitorButton.setDisable(true);
+            status.setText("Busmonitor starten...");
+            append("\n--- Busmonitor ---");
+
+            CompletableFuture
+                    .runAsync(() -> {
+                        try {
+                            monitorService.start(
+                                    routerIp.getText(),
+                                    line -> Platform.runLater(() -> append(line))
+                            );
+                        }
+                        catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .whenComplete((unused, error) -> Platform.runLater(() -> {
+                        discoverButton.setDisable(false);
+                        connectButton.setDisable(false);
+
+                        if (error != null) {
+                            startMonitorButton.setDisable(false);
+                            stopMonitorButton.setDisable(true);
+                            status.setText("Busmonitor kon niet starten");
+                            append("Fout: " + rootMessage(error));
+                            return;
+                        }
+
+                        startMonitorButton.setDisable(true);
+                        stopMonitorButton.setDisable(false);
+                        status.setText("Busmonitor actief");
+                    }));
+        });
+
+        stopMonitorButton.setOnAction(event -> {
+            monitorService.stop();
+            startMonitorButton.setDisable(false);
+            stopMonitorButton.setDisable(true);
+            status.setText("Busmonitor gestopt");
+            append("Busmonitor gestopt.");
+        });
+
         clearButton.setOnAction(event -> log.clear());
 
         var ipRow = new HBox(10,
@@ -129,9 +187,13 @@ public final class OpenKnxStudioApp extends Application {
                 routerIp,
                 connectButton
         );
-        ipRow.setFillHeight(true);
 
-        var actionRow = new HBox(10, discoverButton, clearButton);
+        var actionRow = new HBox(10,
+                discoverButton,
+                startMonitorButton,
+                stopMonitorButton,
+                clearButton
+        );
 
         var top = new VBox(6, title, subtitle);
         var controls = new VBox(12, ipRow, actionRow);
@@ -143,10 +205,11 @@ public final class OpenKnxStudioApp extends Application {
         root.setPadding(new Insets(20));
         VBox.setVgrow(log, Priority.ALWAYS);
 
-        var scene = new Scene(root, 820, 620);
+        var scene = new Scene(root, 940, 660);
         stage.setScene(scene);
-        stage.setMinWidth(680);
-        stage.setMinHeight(480);
+        stage.setMinWidth(760);
+        stage.setMinHeight(520);
+        stage.setOnCloseRequest(event -> monitorService.stop());
         stage.show();
     }
 
@@ -155,6 +218,7 @@ public final class OpenKnxStudioApp extends Application {
             log.appendText("\n");
         }
         log.appendText(text + "\n");
+        log.positionCaret(log.getLength());
     }
 
     private static String rootMessage(Throwable throwable) {
