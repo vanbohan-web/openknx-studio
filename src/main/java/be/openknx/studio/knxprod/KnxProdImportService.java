@@ -7,9 +7,13 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -21,7 +25,8 @@ public final class KnxProdImportService {
             String maskVersion,
             String hardwareTypeMarker,
             int applicationNumber,
-            int applicationVersion
+            int applicationVersion,
+            List<KnxMemorySample> codeSamples
     ) {}
 
     private record HardwareInfo(
@@ -115,7 +120,8 @@ public final class KnxProdImportService {
                             "",
                             "",
                             -1,
-                            -1
+                            -1,
+                            List.of()
                     ));
                     continue;
                 }
@@ -134,7 +140,8 @@ public final class KnxProdImportService {
                             app != null ? app.maskVersion() : "",
                             app != null ? app.hardwareTypeMarker() : "",
                             app != null ? app.applicationNumber() : -1,
-                            app != null ? app.applicationVersion() : -1
+                            app != null ? app.applicationVersion() : -1,
+                            app != null ? app.codeSamples() : List.of()
                     ));
                 }
             }
@@ -174,7 +181,8 @@ public final class KnxProdImportService {
                     normalizeMask(attr(element, "MaskVersion")),
                     marker,
                     parseInt(attr(element, "ApplicationNumber")),
-                    parseInt(attr(element, "ApplicationVersion"))
+                    parseInt(attr(element, "ApplicationVersion")),
+                    findCodeSamples(element)
             ));
         }
 
@@ -218,6 +226,120 @@ public final class KnxProdImportService {
                     List.copyOf(refs)
             ));
         }
+    }
+
+    private static List<KnxMemorySample> findCodeSamples(Element application) {
+        final int maxSampleBytes = 32;
+        final int maxSamples = 8;
+
+        var parameterSegments = new HashSet<String>();
+        var memoryNodes = application.getElementsByTagNameNS("*", "Memory");
+        for (int i = 0; i < memoryNodes.getLength(); i++) {
+            var memory = (Element) memoryNodes.item(i);
+            var ref = attr(memory, "CodeSegment");
+            if (!ref.isBlank()) {
+                parameterSegments.add(ref);
+            }
+        }
+
+        var samples = new ArrayList<KnxMemorySample>();
+        var segmentNodes = application.getElementsByTagNameNS("*", "AbsoluteSegment");
+
+        for (int i = 0; i < segmentNodes.getLength() && samples.size() < maxSamples; i++) {
+            var segment = (Element) segmentNodes.item(i);
+            var id = attr(segment, "Id");
+            int address = parseInt(attr(segment, "Address"));
+
+            if (id.isBlank() || address < 0 || parameterSegments.contains(id)) {
+                continue;
+            }
+
+            // System-7 group/association tables are project data, not application code.
+            if (address == 0x4000 || address == 0x4201) {
+                continue;
+            }
+
+            var segFlagsText = attr(segment, "SegFlags");
+            if (!segFlagsText.isBlank() && parseInt(segFlagsText) == 0) {
+                // Runtime-writable segment: unsuitable as a stable fingerprint.
+                continue;
+            }
+
+            var data = decodePayload(firstChildText(segment, "Data"));
+            if (data.length < 4) {
+                continue;
+            }
+
+            int declaredSize = parseInt(attr(segment, "Size"));
+            int length = Math.min(maxSampleBytes, data.length);
+            if (declaredSize > 0) {
+                length = Math.min(length, declaredSize);
+            }
+            if (length < 4) {
+                continue;
+            }
+
+            var maskData = decodePayload(firstChildText(segment, "Mask"));
+            var expected = java.util.Arrays.copyOf(data, length);
+            var mask = new byte[length];
+
+            if (maskData.length >= length) {
+                System.arraycopy(maskData, 0, mask, 0, length);
+            }
+            else {
+                java.util.Arrays.fill(mask, (byte) 0xff);
+            }
+
+            int fixed = 0;
+            for (byte b : mask) {
+                if ((b & 0xff) == 0xff) {
+                    fixed++;
+                }
+            }
+            if (fixed < 4) {
+                continue;
+            }
+
+            samples.add(new KnxMemorySample(
+                    address,
+                    id,
+                    HexFormat.of().withUpperCase().formatHex(expected),
+                    HexFormat.of().withUpperCase().formatHex(mask)
+            ));
+        }
+
+        return List.copyOf(samples);
+    }
+
+    private static byte[] decodePayload(String value) {
+        if (value == null || value.isBlank()) {
+            return new byte[0];
+        }
+
+        var compact = value.replaceAll("\\s+", "");
+        try {
+            return Base64.getDecoder().decode(compact);
+        }
+        catch (IllegalArgumentException ignored) {
+            if (compact.matches("(?i)[0-9a-f]+") && compact.length() % 2 == 0) {
+                try {
+                    return HexFormat.of().parseHex(compact);
+                }
+                catch (IllegalArgumentException ignoredHex) {
+                }
+            }
+            return new byte[0];
+        }
+    }
+
+    private static String firstChildText(Element parent, String localName) {
+        var nodes = parent.getElementsByTagNameNS("*", localName);
+        if (nodes.getLength() == 0) {
+            return "";
+        }
+
+        var text = nodes.item(0).getTextContent();
+        return text == null ? "" : text.trim();
     }
 
     private static String findHardwareTypeMarker(Element application) {
