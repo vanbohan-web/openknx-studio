@@ -222,7 +222,9 @@ public final class OpenKnxStudioApp extends Application {
                         status.setText("Apparaatinfo gelezen van " + info.address());
                         append("Fysiek adres:       " + info.address());
                         append("Device descriptor:  " + info.deviceDescriptor());
+                        append("Systeemtype:         " + info.systemType());
                         append("Manufacturer ID:    " + info.manufacturerId());
+                        append("Fabrikant:          " + info.manufacturerName());
                         append("Serienummer:        " + info.serialNumber());
                         append("Program version:    " + info.programVersion());
                         append("Programmeerstand:   " + info.programmingMode());
