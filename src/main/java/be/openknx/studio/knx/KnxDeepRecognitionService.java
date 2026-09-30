@@ -11,6 +11,7 @@ import io.calimero.mgmt.ManagementClient;
 import io.calimero.mgmt.RemotePropertyServiceAdapter;
 
 import java.net.InetSocketAddress;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -41,6 +42,7 @@ public final class KnxDeepRecognitionService {
     }
 
     private record ReadKey(int address, int length) {}
+    private record MemoryRead(byte[] bytes, boolean complete) {}
 
     public Result recognize(
             String host,
@@ -65,7 +67,7 @@ public final class KnxDeepRecognitionService {
         var verified = new ArrayList<KnxProductCandidate>();
         var inconclusive = new ArrayList<KnxProductCandidate>();
         var diagnostics = new ArrayList<String>();
-        var cache = new HashMap<ReadKey, Optional<byte[]>>();
+        var cache = new HashMap<ReadKey, Optional<MemoryRead>>();
 
         int comparedSamples = 0;
 
@@ -90,6 +92,7 @@ public final class KnxDeepRecognitionService {
             for (var candidate : candidates) {
                 boolean mismatch = false;
                 int comparedForCandidate = 0;
+                int strongMatchesForCandidate = 0;
 
                 for (KnxMemorySample sample : candidate.codeSamples()) {
                     if (sample == null || sample.length() <= 0) {
@@ -97,20 +100,31 @@ public final class KnxDeepRecognitionService {
                     }
 
                     var key = new ReadKey(sample.address(), sample.length());
-                    Optional<byte[]> resident;
+                    Optional<MemoryRead> resident;
 
                     if (cache.containsKey(key)) {
                         resident = cache.get(key);
                     }
                     else {
                         try {
-                            var bytes = readMemoryChunked(
+                            var read = readMemoryAdaptive(
                                     management,
                                     destination,
                                     sample.address(),
                                     sample.length()
                             );
-                            resident = Optional.ofNullable(bytes);
+                            resident = read.bytes().length == 0
+                                    ? Optional.empty()
+                                    : Optional.of(read);
+
+                            if (!read.complete()) {
+                                diagnostics.add(String.format(
+                                        "Geheugen 0x%04X gedeeltelijk leesbaar: %d/%d bytes gebruikt voor fingerprint.",
+                                        sample.address(),
+                                        read.bytes().length,
+                                        sample.length()
+                                ));
+                            }
                         }
                         catch (KNXException | RuntimeException e) {
                             resident = Optional.empty();
@@ -131,14 +145,19 @@ public final class KnxDeepRecognitionService {
                     comparedForCandidate++;
                     comparedSamples++;
 
-                    if (!matches(sample, resident.get())) {
+                    var read = resident.get();
+                    if (!matches(sample, read.bytes())) {
                         mismatch = true;
                         break;
+                    }
+
+                    if (read.complete() || read.bytes().length >= Math.min(8, sample.length())) {
+                        strongMatchesForCandidate++;
                     }
                 }
 
                 if (!mismatch) {
-                    if (comparedForCandidate > 0) {
+                    if (comparedForCandidate > 0 && strongMatchesForCandidate > 0) {
                         verified.add(candidate);
                     }
                     else {
@@ -158,39 +177,77 @@ public final class KnxDeepRecognitionService {
         );
     }
 
-    private static byte[] readMemoryChunked(
+    private static MemoryRead readMemoryAdaptive(
             ManagementClient management,
             Destination destination,
             int address,
             int length
     ) throws KNXException, InterruptedException {
 
-        // Older System-7 devices commonly advertise a 15-octet APDU.
-        // A conservative 12-byte memory payload keeps A_Memory_Read responses
-        // inside a standard frame and mirrors the chunking seen in ETS-style traffic.
-        final int maxChunk = 12;
-
-        var out = new byte[length];
+        var out = new ByteArrayOutputStream(length);
         int offset = 0;
+        KNXException lastError = null;
 
         while (offset < length) {
-            int chunk = Math.min(maxChunk, length - offset);
-            var bytes = management.readMemory(destination, address + offset, chunk);
+            int remaining = length - offset;
+            int[] preferred = {12, 8, 4, 1};
+            boolean readAny = false;
 
-            if (bytes == null || bytes.length != chunk) {
-                throw new KNXException(String.format(
-                        "onvolledige geheugenrespons op 0x%04X: verwacht %d bytes, kreeg %d",
-                        address + offset,
-                        chunk,
-                        bytes == null ? 0 : bytes.length
-                ));
+            for (int requested : preferred) {
+                int chunk = Math.min(requested, remaining);
+
+                // Avoid retrying the same size when remaining is already smaller.
+                boolean duplicate = false;
+                for (int earlier : preferred) {
+                    if (earlier == requested) {
+                        break;
+                    }
+                    if (Math.min(earlier, remaining) == chunk) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate) {
+                    continue;
+                }
+
+                try {
+                    var bytes = management.readMemory(destination, address + offset, chunk);
+                    if (bytes == null || bytes.length != chunk) {
+                        lastError = new KNXException(String.format(
+                                "onvolledige geheugenrespons op 0x%04X: verwacht %d bytes, kreeg %d",
+                                address + offset,
+                                chunk,
+                                bytes == null ? 0 : bytes.length
+                        ));
+                        continue;
+                    }
+
+                    out.writeBytes(bytes);
+                    offset += chunk;
+                    readAny = true;
+                    break;
+                }
+                catch (KNXException e) {
+                    lastError = e;
+                }
             }
 
-            System.arraycopy(bytes, 0, out, offset, chunk);
-            offset += chunk;
+            if (!readAny) {
+                if (out.size() > 0) {
+                    return new MemoryRead(out.toByteArray(), false);
+                }
+                if (lastError != null) {
+                    throw lastError;
+                }
+                throw new KNXException(String.format(
+                        "could not read memory from 0x%04X",
+                        address + offset
+                ));
+            }
         }
 
-        return out;
+        return new MemoryRead(out.toByteArray(), true);
     }
 
     private static boolean matches(KnxMemorySample sample, byte[] actual) {
@@ -207,7 +264,7 @@ public final class KnxDeepRecognitionService {
                     return false;
                 }
             }
-            return actual.length >= expected.length;
+            return actual.length > 0;
         }
         catch (IllegalArgumentException e) {
             return false;
