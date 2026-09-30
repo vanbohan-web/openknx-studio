@@ -20,6 +20,8 @@ public final class KnxDeviceInfoService {
             String manufacturerId,
             String manufacturerName,
             String serialNumber,
+            String hardwareType,
+            String orderInfo,
             String programVersion,
             String programmingMode,
             String maxApduLength
@@ -56,6 +58,8 @@ public final class KnxDeviceInfoService {
 
             var manufacturer = readProperty(properties, PropertyAccess.PID.MANUFACTURER_ID);
             var serial = readProperty(properties, PropertyAccess.PID.SERIAL_NUMBER);
+            var hardwareType = readProperty(properties, 78);
+            var orderInfo = readProperty(properties, PropertyAccess.PID.ORDER_INFO);
             var program = readProperty(properties, PropertyAccess.PID.PROGRAM_VERSION);
             var progMode = readProperty(properties, PropertyAccess.PID.PROGMODE);
             var maxApdu = readProperty(properties, PropertyAccess.PID.MAX_APDULENGTH);
@@ -67,6 +71,8 @@ public final class KnxDeviceInfoService {
                     formatManufacturer(manufacturer),
                     manufacturerName(manufacturer),
                     formatHex(serial),
+                    formatHex(hardwareType),
+                    formatTextOrHex(orderInfo),
                     formatProgramVersion(program),
                     formatProgrammingMode(progMode),
                     formatUnsigned(maxApdu)
@@ -127,6 +133,33 @@ public final class KnxDeviceInfoService {
         return data == null || data.length == 0
                 ? "niet beschikbaar"
                 : HexFormat.of().withUpperCase().formatHex(data);
+    }
+
+    private static String formatTextOrHex(byte[] data) {
+        if (data == null || data.length == 0) {
+            return "niet beschikbaar";
+        }
+
+        int end = data.length;
+        while (end > 0 && (data[end - 1] == 0 || data[end - 1] == (byte) 0xff)) {
+            end--;
+        }
+
+        if (end > 0) {
+            boolean printable = true;
+            for (int i = 0; i < end; i++) {
+                int ch = data[i] & 0xff;
+                if (ch < 32 || ch > 126) {
+                    printable = false;
+                    break;
+                }
+            }
+            if (printable) {
+                return new String(data, 0, end, java.nio.charset.StandardCharsets.US_ASCII);
+            }
+        }
+
+        return formatHex(data);
     }
 
     private static String formatProgramVersion(byte[] data) {
