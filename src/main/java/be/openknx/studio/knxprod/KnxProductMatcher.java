@@ -55,6 +55,41 @@ public final class KnxProductMatcher {
             }
         }
 
+        if (device.programApplicationNumber() >= 0) {
+            var appMatches = base.stream()
+                    .filter(candidate -> candidate.applicationNumber() >= 0)
+                    .filter(candidate -> candidate.applicationNumber() == device.programApplicationNumber())
+                    .toList();
+
+            if (!appMatches.isEmpty()) {
+                base = appMatches;
+            }
+        }
+
+        if (device.programApplicationVersion() >= 0) {
+            var versionMatches = base.stream()
+                    .filter(candidate -> candidate.applicationVersion() >= 0)
+                    .filter(candidate -> candidate.applicationVersion() == device.programApplicationVersion())
+                    .toList();
+
+            if (!versionMatches.isEmpty()) {
+                base = versionMatches;
+            }
+        }
+
+        if (device.programManufacturerId() >= 0) {
+            var programManufacturer = String.format("M-%04X", device.programManufacturerId());
+            var manufacturerMatches = base.stream()
+                    .filter(candidate -> candidate.applicationRef() != null)
+                    .filter(candidate -> candidate.applicationRef().toUpperCase(Locale.ROOT)
+                            .startsWith(programManufacturer + "_"))
+                    .toList();
+
+            if (!manufacturerMatches.isEmpty()) {
+                base = manufacturerMatches;
+            }
+        }
+
         var orderKeys = deviceOrderKeys(device.orderInfo());
         if (!orderKeys.isEmpty()) {
             var orderMatches = base.stream()
