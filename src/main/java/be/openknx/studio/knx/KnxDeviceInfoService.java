@@ -119,33 +119,63 @@ public final class KnxDeviceInfoService {
     }
 
     private static byte[] readApplicationProgramObject(PropertyClient client) throws InterruptedException {
+        // Preferred path: use the Device Object's interface-object list.
         try {
             var countData = client.getProperty(0, PropertyAccess.PID.IO_LIST, 0, 1);
             int objectCount = (int) unsigned(countData);
 
-            if (objectCount <= 0 || objectCount > 100) {
-                return null;
-            }
+            if (objectCount > 0 && objectCount <= 100) {
+                var ioList = client.getProperty(0, PropertyAccess.PID.IO_LIST, 1, objectCount);
 
-            var ioList = client.getProperty(0, PropertyAccess.PID.IO_LIST, 1, objectCount);
-            if (ioList == null || ioList.length < objectCount * 2) {
-                return null;
-            }
+                if (ioList != null && ioList.length >= objectCount * 2) {
+                    for (int objectIndex = 0; objectIndex < objectCount; objectIndex++) {
+                        int offset = objectIndex * 2;
+                        int objectType = ((ioList[offset] & 0xff) << 8) | (ioList[offset + 1] & 0xff);
 
-            for (int objectIndex = 0; objectIndex < objectCount; objectIndex++) {
-                int offset = objectIndex * 2;
-                int objectType = ((ioList[offset] & 0xff) << 8) | (ioList[offset + 1] & 0xff);
-
-                if (objectType == APPLICATION_PROGRAM_OBJECT_TYPE) {
-                    var program = readProperty(client, objectIndex, PropertyAccess.PID.PROGRAM_VERSION);
-                    if (program != null && program.length > 0) {
-                        return program;
+                        if (objectType == APPLICATION_PROGRAM_OBJECT_TYPE) {
+                            var program = readProperty(
+                                    client,
+                                    objectIndex,
+                                    PropertyAccess.PID.PROGRAM_VERSION
+                            );
+                            if (program != null && program.length > 0) {
+                                return program;
+                            }
+                        }
                     }
                 }
             }
         }
-        catch (KNXException | RuntimeException e) {
-            return null;
+        catch (KNXException | RuntimeException ignored) {
+            // Older System-7 devices do not always expose IO_LIST in a way
+            // that a generic property client can enumerate. Fall through.
+        }
+
+        // Calimero DeviceInfo uses the same fallback idea: enumerate object
+        // indices and read PID_OBJECT_TYPE until the object server stops
+        // answering. This matters for older JUNG 0705 devices.
+        int consecutiveMisses = 0;
+        for (int objectIndex = 0; objectIndex < 32 && consecutiveMisses < 4; objectIndex++) {
+            var typeData = readProperty(client, objectIndex, PropertyAccess.PID.OBJECT_TYPE);
+
+            if (typeData == null || typeData.length == 0) {
+                consecutiveMisses++;
+                continue;
+            }
+
+            consecutiveMisses = 0;
+            int objectType = (int) unsigned(typeData);
+
+            if (objectType == APPLICATION_PROGRAM_OBJECT_TYPE) {
+                var program = readProperty(
+                        client,
+                        objectIndex,
+                        PropertyAccess.PID.PROGRAM_VERSION
+                );
+                if (program != null && program.length > 0) {
+                    return program;
+                }
+            }
         }
 
         return null;
