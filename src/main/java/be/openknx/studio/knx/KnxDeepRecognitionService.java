@@ -6,6 +6,8 @@ import io.calimero.IndividualAddress;
 import io.calimero.KNXException;
 import io.calimero.link.KNXNetworkLinkIP;
 import io.calimero.link.medium.TPSettings;
+import io.calimero.mgmt.Destination;
+import io.calimero.mgmt.ManagementClient;
 import io.calimero.mgmt.RemotePropertyServiceAdapter;
 
 import java.net.InetSocketAddress;
@@ -73,6 +75,18 @@ public final class KnxDeepRecognitionService {
             var management = adapter.managementClient();
             var destination = adapter.destination();
 
+            try {
+                int level = management.authorize(
+                        destination,
+                        new byte[] {(byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff}
+                );
+                diagnostics.add("A_Authorize uitgevoerd met KNX free-access key; toegangsniveau " + level + ".");
+            }
+            catch (KNXException | RuntimeException e) {
+                diagnostics.add("A_Authorize niet bevestigd: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            }
+
             for (var candidate : candidates) {
                 boolean mismatch = false;
                 int comparedForCandidate = 0;
@@ -90,7 +104,12 @@ public final class KnxDeepRecognitionService {
                     }
                     else {
                         try {
-                            var bytes = management.readMemory(destination, sample.address(), sample.length());
+                            var bytes = readMemoryChunked(
+                                    management,
+                                    destination,
+                                    sample.address(),
+                                    sample.length()
+                            );
                             resident = Optional.ofNullable(bytes);
                         }
                         catch (KNXException | RuntimeException e) {
@@ -137,6 +156,41 @@ public final class KnxDeepRecognitionService {
                 comparedSamples,
                 diagnostics.stream().distinct().limit(20).toList()
         );
+    }
+
+    private static byte[] readMemoryChunked(
+            ManagementClient management,
+            Destination destination,
+            int address,
+            int length
+    ) throws KNXException, InterruptedException {
+
+        // Older System-7 devices commonly advertise a 15-octet APDU.
+        // A conservative 12-byte memory payload keeps A_Memory_Read responses
+        // inside a standard frame and mirrors the chunking seen in ETS-style traffic.
+        final int maxChunk = 12;
+
+        var out = new byte[length];
+        int offset = 0;
+
+        while (offset < length) {
+            int chunk = Math.min(maxChunk, length - offset);
+            var bytes = management.readMemory(destination, address + offset, chunk);
+
+            if (bytes == null || bytes.length != chunk) {
+                throw new KNXException(String.format(
+                        "onvolledige geheugenrespons op 0x%04X: verwacht %d bytes, kreeg %d",
+                        address + offset,
+                        chunk,
+                        bytes == null ? 0 : bytes.length
+                ));
+            }
+
+            System.arraycopy(bytes, 0, out, offset, chunk);
+            offset += chunk;
+        }
+
+        return out;
     }
 
     private static boolean matches(KnxMemorySample sample, byte[] actual) {
