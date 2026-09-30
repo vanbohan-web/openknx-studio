@@ -9,7 +9,9 @@ public record KnxProductCandidate(
         String applicationRef,
         String applicationName,
         String maskVersion,
-        String hardwareTypeMarker
+        String hardwareTypeMarker,
+        int applicationNumber,
+        int applicationVersion
 ) {
     public String displayName() {
         var order = orderNumber == null || orderNumber.isBlank() ? "zonder ordernr." : orderNumber;
