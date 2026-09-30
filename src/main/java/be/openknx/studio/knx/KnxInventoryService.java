@@ -47,6 +47,9 @@ public final class KnxInventoryService {
                         "niet beschikbaar",
                         "niet beschikbaar",
                         "niet beschikbaar",
+                        -1,
+                        -1,
+                        -1,
                         "niet beschikbaar",
                         "niet beschikbaar"
                 ));
