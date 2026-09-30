@@ -19,7 +19,9 @@ public final class KnxProdImportService {
             String ref,
             String name,
             String maskVersion,
-            String hardwareTypeMarker
+            String hardwareTypeMarker,
+            int applicationNumber,
+            int applicationVersion
     ) {}
 
     private record HardwareInfo(
@@ -109,7 +111,9 @@ public final class KnxProdImportService {
                             "",
                             "",
                             "",
-                            ""
+                            "",
+                            -1,
+                            -1
                     ));
                     continue;
                 }
@@ -125,7 +129,9 @@ public final class KnxProdImportService {
                             appRef,
                             app != null ? app.name() : "",
                             app != null ? app.maskVersion() : "",
-                            app != null ? app.hardwareTypeMarker() : ""
+                            app != null ? app.hardwareTypeMarker() : "",
+                            app != null ? app.applicationNumber() : -1,
+                            app != null ? app.applicationVersion() : -1
                     ));
                 }
             }
@@ -163,7 +169,9 @@ public final class KnxProdImportService {
                     id,
                     firstNonBlank(attr(element, "Name"), attr(element, "Text")),
                     normalizeMask(attr(element, "MaskVersion")),
-                    marker
+                    marker,
+                    parseInt(attr(element, "ApplicationNumber")),
+                    parseInt(attr(element, "ApplicationVersion"))
             ));
         }
 
@@ -248,6 +256,23 @@ public final class KnxProdImportService {
 
     private static String normalizeHex(String value) {
         return value == null ? "" : value.replaceAll("[^0-9A-Fa-f]", "").toUpperCase();
+    }
+
+    private static int parseInt(String value) {
+        if (value == null || value.isBlank()) {
+            return -1;
+        }
+
+        var v = value.trim();
+        try {
+            if (v.startsWith("0x") || v.startsWith("0X")) {
+                return Integer.parseInt(v.substring(2), 16);
+            }
+            return Integer.parseInt(v);
+        }
+        catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private static String attr(Element element, String name) {
