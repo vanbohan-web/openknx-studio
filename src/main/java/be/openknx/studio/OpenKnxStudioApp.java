@@ -1,6 +1,7 @@
 package be.openknx.studio;
 
 import be.openknx.studio.knx.KnxConnectionService;
+import be.openknx.studio.knx.KnxDeviceScanService;
 import be.openknx.studio.knx.KnxDiscoveryService;
 import be.openknx.studio.knx.KnxGroupMonitorService;
 import javafx.application.Application;
@@ -18,6 +19,7 @@ public final class OpenKnxStudioApp extends Application {
     private final KnxDiscoveryService discoveryService = new KnxDiscoveryService();
     private final KnxConnectionService connectionService = new KnxConnectionService();
     private final KnxGroupMonitorService monitorService = new KnxGroupMonitorService();
+    private final KnxDeviceScanService deviceScanService = new KnxDeviceScanService();
 
     private final TextArea log = new TextArea();
     private final TextField routerIp = new TextField();
@@ -35,10 +37,19 @@ public final class OpenKnxStudioApp extends Application {
         routerIp.setPromptText("bv. 192.168.1.50");
         routerIp.setPrefColumnCount(18);
 
+        var areaField = new Spinner<Integer>(0, 15, 1);
+        areaField.setEditable(true);
+        areaField.setPrefWidth(75);
+
+        var lineField = new Spinner<Integer>(0, 15, 1);
+        lineField.setEditable(true);
+        lineField.setPrefWidth(75);
+
         var discoverButton = new Button("Zoek KNX/IP");
         discoverButton.setDefaultButton(true);
 
         var connectButton = new Button("Test verbinding");
+        var scanButton = new Button("Scan apparaten");
         var startMonitorButton = new Button("Start busmonitor");
         var stopMonitorButton = new Button("Stop busmonitor");
         stopMonitorButton.setDisable(true);
@@ -55,17 +66,18 @@ public final class OpenKnxStudioApp extends Application {
                 Welkom bij OpenKNX Studio.
 
                 1. Klik op 'Zoek KNX/IP'.
-                2. Zoek in de resultaten naar je Weinzierl KNX IP Router 751.
-                3. Vul het IP-adres in.
-                4. Klik op 'Test verbinding'.
-                5. Start daarna de busmonitor.
+                2. Vul het IP-adres van je Weinzierl KNX IP Router 751 in.
+                3. Klik op 'Test verbinding'.
+                4. Gebruik 'Start busmonitor' om groepstelegrammen te bekijken.
+                5. Gebruik 'Scan apparaten' om fysieke KNX-adressen op een lijn te zoeken.
 
-                De busmonitor luistert alleen. Deze versie schrijft nog niets naar de KNX-bus.
+                De scan leest alleen welke adressen reageren. Er worden geen adressen of parameters gewijzigd.
                 """);
 
         discoverButton.setOnAction(event -> {
             discoverButton.setDisable(true);
             connectButton.setDisable(true);
+            scanButton.setDisable(true);
             startMonitorButton.setDisable(true);
             status.setText("KNX/IP-apparaten zoeken...");
             append("\n--- Discovery gestart ---");
@@ -82,6 +94,7 @@ public final class OpenKnxStudioApp extends Application {
                     .whenComplete((results, error) -> Platform.runLater(() -> {
                         discoverButton.setDisable(false);
                         connectButton.setDisable(false);
+                        scanButton.setDisable(false);
                         startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
@@ -106,6 +119,7 @@ public final class OpenKnxStudioApp extends Application {
         connectButton.setOnAction(event -> {
             discoverButton.setDisable(true);
             connectButton.setDisable(true);
+            scanButton.setDisable(true);
             startMonitorButton.setDisable(true);
             status.setText("Tunnelingverbinding testen...");
             append("\n--- Verbindingstest naar " + routerIp.getText().trim() + " ---");
@@ -122,6 +136,7 @@ public final class OpenKnxStudioApp extends Application {
                     .whenComplete((name, error) -> Platform.runLater(() -> {
                         discoverButton.setDisable(false);
                         connectButton.setDisable(false);
+                        scanButton.setDisable(false);
                         startMonitorButton.setDisable(monitorService.isRunning());
 
                         if (error != null) {
@@ -132,6 +147,44 @@ public final class OpenKnxStudioApp extends Application {
 
                         status.setText("Verbonden");
                         append("OK — KNXnet/IP tunneling werkt. Link: " + name);
+                    }));
+        });
+
+        scanButton.setOnAction(event -> {
+            var area = areaField.getValue();
+            var line = lineField.getValue();
+
+            scanButton.setDisable(true);
+            status.setText("KNX-lijn " + area + "." + line + " scannen...");
+            append("\n--- Apparaten scan " + area + "." + line + ".[0..255] ---");
+
+            CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return deviceScanService.scanLine(routerIp.getText(), area, line);
+                        }
+                        catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .whenComplete((devices, error) -> Platform.runLater(() -> {
+                        scanButton.setDisable(false);
+
+                        if (error != null) {
+                            status.setText("Apparatenscan mislukt");
+                            append("Fout tijdens scan: " + rootMessage(error));
+                            return;
+                        }
+
+                        status.setText(devices.size() + " KNX-apparaat/apparaten gevonden op " + area + "." + line);
+
+                        if (devices.isEmpty()) {
+                            append("Geen reagerende KNX-apparaten gevonden.");
+                            return;
+                        }
+
+                        append("Gevonden fysieke adressen:");
+                        devices.forEach(address -> append("  • " + address));
                     }));
         });
 
@@ -188,6 +241,14 @@ public final class OpenKnxStudioApp extends Application {
                 connectButton
         );
 
+        var scanRow = new HBox(10,
+                new Label("KNX area:"),
+                areaField,
+                new Label("Lijn:"),
+                lineField,
+                scanButton
+        );
+
         var actionRow = new HBox(10,
                 discoverButton,
                 startMonitorButton,
@@ -196,7 +257,7 @@ public final class OpenKnxStudioApp extends Application {
         );
 
         var top = new VBox(6, title, subtitle);
-        var controls = new VBox(12, ipRow, actionRow);
+        var controls = new VBox(12, ipRow, scanRow, actionRow);
 
         var statusBar = new HBox(8, new Label("Status:"), status);
         statusBar.setStyle("-fx-padding: 8 0 0 0;");
@@ -205,10 +266,10 @@ public final class OpenKnxStudioApp extends Application {
         root.setPadding(new Insets(20));
         VBox.setVgrow(log, Priority.ALWAYS);
 
-        var scene = new Scene(root, 940, 660);
+        var scene = new Scene(root, 940, 700);
         stage.setScene(scene);
         stage.setMinWidth(760);
-        stage.setMinHeight(520);
+        stage.setMinHeight(560);
         stage.setOnCloseRequest(event -> monitorService.stop());
         stage.show();
     }
