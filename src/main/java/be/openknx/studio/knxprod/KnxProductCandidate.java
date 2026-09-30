@@ -1,5 +1,7 @@
 package be.openknx.studio.knxprod;
 
+import java.util.List;
+
 public record KnxProductCandidate(
         String manufacturerRef,
         String hardwareRef,
@@ -12,7 +14,8 @@ public record KnxProductCandidate(
         String maskVersion,
         String hardwareTypeMarker,
         int applicationNumber,
-        int applicationVersion
+        int applicationVersion,
+        List<KnxMemorySample> codeSamples
 ) {
     public String displayName() {
         var order = orderNumber == null || orderNumber.isBlank() ? "zonder ordernr." : orderNumber;
