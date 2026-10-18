@@ -1,4 +1,4 @@
-name: Build Sonos v0.4 APK
+name: Build Sonos v0.5 APK
 on:
   push:
     branches: [sonos-apk-build-test-20261018]
@@ -17,29 +17,28 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Android SDK packages
-        shell: bash
         run: |
-          echo "Android SDK: $ANDROID_HOME"
           SDKM=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
-          echo "sdkmanager=$SDKM"
           test -x "$SDKM"
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" --install "platforms;android-36" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Unpack Sonos app
-        shell: bash
+      - name: Unpack Sonos app v0.4 base
         run: |
-          mkdir -p sonos_v04/android
-          base64 --decode sonos_v04/android_source.tar.xz.b64 | tar -xJ -C sonos_v04/android
-      - name: Build installable debug APK
-        working-directory: sonos_v04/android
+          mkdir -p sonos_v05/android
+          base64 --decode sonos_v04/android_source.tar.xz.b64 | tar -xJ -C sonos_v05/android
+          cp sonos_v05/MainActivity.java sonos_v05/android/app/src/main/java/be/vantique/mijnmuzieksonos/MainActivity.java
+          cp sonos_v05/SonosApi.java sonos_v05/android/app/src/main/java/be/vantique/mijnmuzieksonos/SonosApi.java
+          sed -i 's/versionCode 4/versionCode 5/;s/0.4-mappen-afspeellijsten/0.5-automatisch-afspelen/' sonos_v05/android/app/build.gradle
+      - name: Compile APK
+        working-directory: sonos_v05/android
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Publish APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mijn-Muziek-Naar-Sonos-v0.4-APK
-          path: sonos_v04/android/app/build/outputs/apk/debug/app-debug.apk
+          name: Mijn-Muziek-Naar-Sonos-v0.5-APK
+          path: sonos_v05/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
