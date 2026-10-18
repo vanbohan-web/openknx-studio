@@ -3,6 +3,8 @@ on:
   push:
     branches: [sonos-apk-build-test-20261018]
   workflow_dispatch:
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 jobs:
