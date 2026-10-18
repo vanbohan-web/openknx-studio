@@ -19,14 +19,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK 36
+      - name: Install Android SDK command line tools and platform 36
         run: |
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT=$ANDROID_HOME
-          SDKMGR="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
-          test -x "$SDKMGR"
-          yes | "$SDKMGR" --licenses >/dev/null || true
-          "$SDKMGR" --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          SDK_ROOT="$RUNNER_TEMP/android-sdk"
+          mkdir -p "$SDK_ROOT/cmdline-tools"
+          curl -fL --retry 3 --connect-timeout 20 -o "$RUNNER_TEMP/android-tools.zip" "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip"
+          unzip -q "$RUNNER_TEMP/android-tools.zip" -d "$SDK_ROOT/cmdline-tools"
+          mv "$SDK_ROOT/cmdline-tools/cmdline-tools" "$SDK_ROOT/cmdline-tools/latest"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
