@@ -1,4 +1,4 @@
-name: Build Sonos v0.2 APK
+name: Build Sonos v0.4 APK
 on:
   push:
     branches: [sonos-apk-build-test-20261018]
@@ -31,15 +31,15 @@ jobs:
       - name: Unpack Sonos app
         shell: bash
         run: |
-          mkdir -p sonos_build/project
-          base64 --decode sonos_build/source.tar.xz.b64 | tar -xJ -C sonos_build/project
+          mkdir -p sonos_v04/android
+          base64 --decode sonos_v04/android_source.tar.xz.b64 | tar -xJ -C sonos_v04/android
       - name: Build installable debug APK
-        working-directory: sonos_build/project
+        working-directory: sonos_v04/android
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Publish APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mijn-Muziek-Naar-Sonos-v0.2-APK
-          path: sonos_build/project/app/build/outputs/apk/debug/app-debug.apk
+          name: Mijn-Muziek-Naar-Sonos-v0.4-APK
+          path: sonos_v04/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
