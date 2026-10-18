@@ -17,7 +17,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - name: Use preinstalled Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          test -x "$SDKM"
+          echo "SDKMANAGER=$SDKM" >> "$GITHUB_ENV"
+          yes | "$SDKM" --licenses >/dev/null || true
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
@@ -28,7 +35,7 @@ jobs:
           base64 -d sonos_v04/android_source.tar.xz.b64 | tar -xJ -C sonos_v04/android
       - name: Install Android SDK
         shell: bash
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+        run: "$SDKMANAGER" --install "platforms;android-36" "build-tools;35.0.0"
       - name: Compile Android v0.4
         working-directory: sonos_v04/android
         run: gradle --no-daemon :app:assembleDebug
