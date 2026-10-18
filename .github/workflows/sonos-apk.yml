@@ -1,0 +1,13 @@
+name: Sonos APK test
+on:
+  push:
+    branches: [sonos-apk-build-test-20261018]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify runner
+        run: echo "Sonos APK build ready"
