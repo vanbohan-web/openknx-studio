@@ -1,0 +1,1 @@
+Sonos v0.5: queue + saved playlists. Build branch for Android and Windows. Do not merge into KNX main.
